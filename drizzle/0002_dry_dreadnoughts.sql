@@ -1,0 +1,1 @@
+ALTER TABLE `agent_alerts` ADD `push_sent_at` timestamp;
