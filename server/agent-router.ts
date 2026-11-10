@@ -1,8 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { agentTasks, users } from "../drizzle/schema";
+import { agentMemories, agentMessages, agentTasks, users } from "../drizzle/schema";
 import { createHeartbeatJob, deleteHeartbeatJob, updateHeartbeatJob } from "./_core/heartbeat";
 import { currentSessionCookie } from "./_core/cookies";
+import { invokeLLM } from "./_core/llm";
 import { protectedProcedure, router } from "./_core/trpc";
 import { getLatestArchNewsKey } from "./arch-news";
 import { dailyCronFromLocalTime, isValidTimeZone, listAgentAlertsForUser, listAgentTasksForUser } from "./agent-tasks";
@@ -20,10 +21,76 @@ const taskIdInput = z.object({ id: z.number().int().positive() });
 const timeInput = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const timeZoneInput = z.string().min(1).max(64).refine(isValidTimeZone, "Zona horaria IANA no válida");
 
+const chatInput = z.object({ message: z.string().trim().min(1).max(4000) });
+
+function textFromLLM(value: string | Array<{ type: string; text?: string }>): string {
+  if (typeof value === "string") return value.trim();
+  return value.filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n").trim();
+}
+
+function memoryFromMessage(message: string): string | null {
+  const match = message.match(/^(?:recuerda(?:me)?|acu[eé]rdate|remember)\s*(?:que|to)?\s*[:\-]?\s*(.+)$/i);
+  const content = match?.[1]?.trim().replace(/[.!?]+$/, "");
+  return content && content.length >= 3 ? content.slice(0, 1000) : null;
+}
+
 export const agentRouter = router({
   tasks: protectedProcedure.query(async ({ ctx }) => listAgentTasksForUser(ctx.user.id)),
 
   alerts: protectedProcedure.query(async ({ ctx }) => listAgentAlertsForUser(ctx.user.id)),
+
+  memories: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Database is unavailable");
+    return db.select().from(agentMemories).where(and(eq(agentMemories.userId, ctx.user.id), eq(agentMemories.isActive, true))).orderBy(desc(agentMemories.createdAt)).limit(30);
+  }),
+
+  forgetMemory: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database is unavailable");
+      await db.update(agentMemories).set({ isActive: false }).where(and(eq(agentMemories.id, input.id), eq(agentMemories.userId, ctx.user.id)));
+      return { forgotten: true };
+    }),
+
+  chat: protectedProcedure.input(chatInput).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Database is unavailable");
+
+    const remembered = memoryFromMessage(input.message);
+    if (remembered) {
+      await db.insert(agentMemories).values({ userId: ctx.user.id, content: remembered, source: "chat", isActive: true });
+    }
+
+    const [memories, recentMessages] = await Promise.all([
+      db.select({ id: agentMemories.id, content: agentMemories.content }).from(agentMemories)
+        .where(and(eq(agentMemories.userId, ctx.user.id), eq(agentMemories.isActive, true)))
+        .orderBy(desc(agentMemories.createdAt)).limit(30),
+      db.select({ role: agentMessages.role, content: agentMessages.content }).from(agentMessages)
+        .where(eq(agentMessages.userId, ctx.user.id)).orderBy(desc(agentMessages.createdAt)).limit(12),
+    ]);
+
+    await db.insert(agentMessages).values({ userId: ctx.user.id, role: "user", content: input.message });
+    const memoryBlock = memories.length > 0
+      ? memories.map((memory) => `- [${memory.id}] ${memory.content}`).join("\n")
+      : "(Todavía no hay recuerdos guardados.)";
+    const history = recentMessages.reverse().map((message) => ({ role: message.role, content: message.content } as const));
+    const result = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `Eres Seegson, un agente personal claro, sobrio y útil. Responde en español salvo que la persona cambie de idioma. Puedes recordar datos solo cuando la persona diga explícitamente “recuerda”, “acuérdate” o “remember”; confirma cuando se haya guardado. No inventes ejecuciones ni notificaciones: las tareas programadas se gestionan desde la sección de tareas. Memoria persistente actual:\n${memoryBlock}`,
+        },
+        ...history,
+        { role: "user", content: input.message },
+      ],
+      maxTokens: 700,
+    });
+    const reply = textFromLLM(result.choices[0]?.message?.content ?? "No pude responder en este momento.");
+    await db.insert(agentMessages).values({ userId: ctx.user.id, role: "assistant", content: reply });
+    return { reply, remembered: remembered ?? null, memories };
+  }),
 
   registerPushToken: protectedProcedure
     .input(z.object({ token: z.string().min(20).max(255) }))

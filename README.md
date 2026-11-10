@@ -1,12 +1,14 @@
-# Seegson — gestor de eventos
+# Seegson
 
-Seegson es una app Android con calendario, agenda de eventos, alarmas y un agente de tareas. Su identidad visual usa un fondo azul tinta con señales ámbar y turquesa; el icono propio combina calendario y reloj.
+Seegson es una app Android con calendario, agenda de eventos, alarmas y un agente de tareas. Su identidad visual usa un fondo azul tinta con señales ámbar y turquesa, con un símbolo industrial retrofuturista inspirado en interfaces de ciencia ficción.
 
 ## Funciones incluidas
 
 - Calendario mensual y agenda por fecha, con creación, edición, eliminación, categorías, estados, filtros y búsqueda en toda la agenda.
 - Alarmas locales por evento; por ejemplo, un evento a las 16:00 puede llevar un aviso a las 00:00 del mismo día.
 - Recordatorios diarios locales configurables.
+- Chat con IA remota a través del backend integrado; no ejecuta ningún modelo local en el teléfono.
+- Memoria persistente por cuenta: el agente guarda frases explícitas como “Recuerda que…” y permite olvidar el último recuerdo desde la interfaz.
 - Vigilancia programada del feed oficial de noticias de Arch Linux, deduplicación de entradas, historial de alertas y entrega Expo Push cuando el dispositivo esté registrado.
 - Centro unificado para revisar y administrar alarmas, rutinas y vigilancia.
 
@@ -27,6 +29,8 @@ CI=true pnpm build
 Las alarmas de eventos y los recordatorios diarios se programan como notificaciones locales. El usuario debe permitir notificaciones en Android y, según el dispositivo, revisar el acceso a alarmas exactas y la optimización de batería; Android o el fabricante pueden retrasarlas. El funcionamiento con la app cerrada debe confirmarse en un dispositivo Android real.
 
 La vigilancia de Arch se ejecuta en el servidor mediante tareas programadas. Su ejecución continua requiere publicar la versión del servidor y registrar un token push Expo válido en un build Android conectado a un proyecto Expo. Sin esa conexión, las alertas guardadas se consultan desde la bandeja de Seegson, pero no se puede afirmar que llegue push al teléfono.
+
+El chat usa `invokeLLM` en el servidor y las credenciales `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY` del entorno de ejecución; nunca se envían claves al cliente Android. La migración `0003_seegson_agent_memory.sql` crea el historial breve y la memoria persistente por usuario.
 
 El preset vigila **Arch Linux News** (`https://archlinux.org/feeds/news/`): son noticias/comunicados oficiales, no cada actualización de paquete. Eventos y recordatorios diarios se guardan localmente en el dispositivo; no se sincronizan entre teléfonos.
 

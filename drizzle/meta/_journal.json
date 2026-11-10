@@ -22,6 +22,13 @@
       "when": 1794250213889,
       "tag": "0002_dry_dreadnoughts",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794251000000,
+      "tag": "0003_seegson_agent_memory",
+      "breakpoints": true
     }
   ]
 }

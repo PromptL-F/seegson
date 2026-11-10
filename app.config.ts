@@ -28,7 +28,7 @@ const schemeFromBundleId = `manus${timestamp}`;
 
 const env = {
   // App branding - update these values directly (do not use env vars)
-  appName: "Seegson — Gestor de eventos",
+  appName: "Seegson",
   appSlug: "seegson",
   logoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663561959944/rxEkuAunliUmzWXZ.png",
   scheme: schemeFromBundleId,

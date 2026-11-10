@@ -14,6 +14,10 @@ Dirección visual aplicada: agenda móvil de precisión con aire retrofuturista 
 
 ## Agente y tareas programadas
 - [x] Seegson permite crear y administrar tareas recurrentes que se ejecutan cada día a una hora elegida y producen una notificación local.
+- [x] La aplicación se llama exactamente “Seegson” y el icono/mark usa una señal industrial retrofuturista propia, inspirada en la estética de Seegson sin copiar un logotipo externo.
+- [x] El agente ofrece un chat con IA remota mediante `invokeLLM`; el modelo se ejecuta en el servidor y no se instala ni ejecuta localmente en Android.
+- [x] El agente conserva memoria por cuenta cuando la persona escribe una instrucción explícita como “Recuerda que…”, muestra el recuerdo más reciente y permite olvidarlo.
+- [x] El formulario de tareas se adapta al teclado mediante `KeyboardAvoidingView`, scroll anidado y ajustes automáticos de insets para evitar que el teclado cubra los campos.
 - [ ] Se puede configurar una tarea condicional para detectar novedades externas y notificar cuando aparezcan; el caso inicial de Arch vigila el feed oficial de noticias de Arch Linux, avisa por las entradas nuevas desde la última revisión, recupera las entradas disponibles si el cursor antiguo ya no aparece y evita repetir avisos sobre entradas ya notificadas. Implementación y pruebas listas; falta publicar el servidor y vincular Expo para confirmar el push en un teléfono.
 - [x] La tarea de agente permite activarse, desactivarse, reprogramarse o eliminarse.
 

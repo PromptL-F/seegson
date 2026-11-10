@@ -74,3 +74,35 @@ export const agentAlerts = mysqlTable(
 );
 
 export type AgentAlert = typeof agentAlerts.$inferSelect;
+
+/** Persistent memories explicitly saved by the user through the conversational agent. */
+export const agentMemories = mysqlTable(
+  "agent_memories",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").notNull(),
+    content: text("content").notNull(),
+    source: varchar("source", { length: 32 }).notNull().default("chat"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => [index("agent_memories_user_idx").on(table.userId, table.isActive)],
+);
+
+export type AgentMemory = typeof agentMemories.$inferSelect;
+
+/** Short conversation history used to give the remote model continuity. */
+export const agentMessages = mysqlTable(
+  "agent_messages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").notNull(),
+    role: mysqlEnum("role", ["user", "assistant"]).notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("agent_messages_user_created_idx").on(table.userId, table.createdAt)],
+);
+
+export type AgentMessage = typeof agentMessages.$inferSelect;

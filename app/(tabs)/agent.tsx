@@ -5,6 +5,8 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -44,6 +46,8 @@ type RemoteArchTask = {
   lastCheckedAt: Date | string | null;
 };
 
+type ChatMessage = { role: "user" | "assistant"; content: string };
+
 function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -76,6 +80,8 @@ export default function AgentScreen() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [pushNotice, setPushNotice] = useState("");
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const utils = trpc.useUtils();
   const tasksQuery = trpc.agent.tasks.useQuery(undefined, { enabled: isAuthenticated, retry: false });
@@ -83,6 +89,9 @@ export default function AgentScreen() {
   const updateMonitor = trpc.agent.updateArchMonitor.useMutation();
   const deleteMonitor = trpc.agent.deleteArchMonitor.useMutation();
   const registerPushToken = trpc.agent.registerPushToken.useMutation();
+  const memoriesQuery = trpc.agent.memories.useQuery(undefined, { enabled: isAuthenticated, retry: false });
+  const chatAgent = trpc.agent.chat.useMutation();
+  const forgetMemory = trpc.agent.forgetMemory.useMutation();
   const registerPushTokenAsync = registerPushToken.mutateAsync;
   const pushRegistrationFor = useRef<string | null>(null);
 
@@ -90,6 +99,20 @@ export default function AgentScreen() {
     () => (tasksQuery.data ?? []) as unknown as RemoteArchTask[],
     [tasksQuery.data],
   );
+
+  const sendChatMessage = async () => {
+    const message = chatInput.trim();
+    if (!message || chatAgent.isPending || !isAuthenticated) return;
+    setChatInput("");
+    setChatMessages((current) => [...current, { role: "user", content: message }]);
+    try {
+      const response = await chatAgent.mutateAsync({ message });
+      setChatMessages((current) => [...current, { role: "assistant", content: response.reply }]);
+      await memoriesQuery.refetch();
+    } catch {
+      setChatMessages((current) => [...current, { role: "assistant", content: "No pude conectarme con la IA. Comprueba la conexión e inténtalo de nuevo." }]);
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -315,7 +338,7 @@ export default function AgentScreen() {
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
         <View style={styles.brandRow}>
-          <View style={styles.brandMark}><Ionicons name="radio-outline" size={20} color={colors.background} /></View>
+          <View style={styles.brandMark}><Image source={require("@/assets/images/icon.png")} style={styles.brandLogo} accessibilityLabel="Logo Seegson" /></View>
           <View><Text style={styles.brandName}>SEEGSON</Text><Text style={styles.brandSubtitle}>AGENTE PERSONAL</Text></View>
           <Pressable style={styles.addIconButton} onPress={openNewTask} accessibilityLabel="Crear tarea">
             <Ionicons name="add" size={21} color={colors.background} />
@@ -326,6 +349,27 @@ export default function AgentScreen() {
           <Text style={styles.eyebrow}>TAREAS PROGRAMADAS</Text>
           <Text style={styles.pageTitle}>Deja el seguimiento{"\n"}<Text style={styles.pageTitleAccent}>en buenas manos.</Text></Text>
           <Text style={styles.introText}>Crea un aviso diario o encarga al agente que vigile una fuente por ti.</Text>
+        </View>
+
+        <View style={styles.chatCard}>
+          <View style={styles.chatHeader}>
+            <View style={styles.chatIcon}><Ionicons name="sparkles" size={17} color={colors.background} /></View>
+            <View style={{ flex: 1 }}><Text style={styles.chatTitle}>Habla con Seegson</Text><Text style={styles.chatSubtitle}>IA remota · memoria persistente</Text></View>
+            <View style={styles.onlineDot} />
+          </View>
+          {!isAuthenticated ? (
+            <Text style={styles.chatHint}>Inicia sesión para conversar con el agente y conservar recuerdos entre dispositivos.</Text>
+          ) : (
+            <>
+              {chatMessages.length === 0 && <Text style={styles.chatHint}>Prueba: “Recuerda que mi revisión semanal es los viernes”</Text>}
+              {chatMessages.slice(-4).map((message, index) => <View key={`${message.role}-${index}`} style={[styles.chatBubble, message.role === "user" ? styles.chatBubbleUser : styles.chatBubbleAgent]}><Text style={styles.chatBubbleText}>{message.content}</Text></View>)}
+              <View style={styles.chatComposer}>
+                <TextInput value={chatInput} onChangeText={setChatInput} onSubmitEditing={() => void sendChatMessage()} placeholder="Escribe a tu agente…" placeholderTextColor={colors.dim} style={styles.chatInput} multiline maxLength={4000} returnKeyType="send" />
+                <Pressable onPress={() => void sendChatMessage()} disabled={chatAgent.isPending || !chatInput.trim()} style={[styles.chatSend, (chatAgent.isPending || !chatInput.trim()) && { opacity: 0.45 }]} accessibilityLabel="Enviar mensaje"><Ionicons name={chatAgent.isPending ? "hourglass-outline" : "arrow-up"} size={17} color={colors.background} /></Pressable>
+              </View>
+            </>
+          )}
+          {isAuthenticated && memoriesQuery.data && memoriesQuery.data.length > 0 && <View style={styles.memoryStrip}><Ionicons name="bookmark-outline" size={13} color={colors.amber} /><Text style={styles.memoryText} numberOfLines={2}>Recuerda: {memoriesQuery.data[0].content}</Text><Pressable onPress={() => void forgetMemory.mutateAsync({ id: memoriesQuery.data[0].id }).then(() => memoriesQuery.refetch())} accessibilityLabel="Olvidar último recuerdo"><Ionicons name="close" size={14} color={colors.dim} /></Pressable></View>}
         </View>
 
         <View style={styles.infoCard}>
@@ -422,7 +466,7 @@ export default function AgentScreen() {
       </ScrollView>
 
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={closeModal}>
-        <View style={styles.modalRoot}>
+        <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <Pressable style={styles.modalBackdrop} onPress={closeModal} />
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
@@ -440,7 +484,7 @@ export default function AgentScreen() {
                 </Pressable>
               </View>
             )}
-            <ScrollView contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled">
+            <ScrollView contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" nestedScrollEnabled automaticallyAdjustKeyboardInsets showsVerticalScrollIndicator={false}>
               {taskMode === "daily" ? (
                 <>
                   <Text style={styles.fieldLabel}>¿QUÉ QUIERES QUE TE RECUERDE?</Text>
@@ -469,7 +513,7 @@ export default function AgentScreen() {
               </Pressable>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -480,6 +524,7 @@ const styles = StyleSheet.create({
   page: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24, maxWidth: 640, width: "100%", alignSelf: "center" },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 11 },
   brandMark: { width: 40, height: 40, borderRadius: 13, backgroundColor: colors.teal, alignItems: "center", justifyContent: "center" },
+  brandLogo: { width: 29, height: 29, borderRadius: 8 },
   brandName: { color: colors.text, fontSize: 13, fontWeight: "900", letterSpacing: 2.3 },
   brandSubtitle: { color: colors.dim, fontSize: 8, fontWeight: "700", letterSpacing: 1.4, marginTop: 3 },
   addIconButton: { marginLeft: "auto", width: 39, height: 39, borderRadius: 13, backgroundColor: colors.amber, alignItems: "center", justifyContent: "center" },
@@ -488,6 +533,22 @@ const styles = StyleSheet.create({
   pageTitle: { color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: "800", letterSpacing: -0.5 },
   pageTitleAccent: { color: colors.teal },
   introText: { color: colors.muted, fontSize: 12, lineHeight: 19, marginTop: 9, maxWidth: 310 },
+  chatCard: { backgroundColor: colors.surface, borderRadius: 19, borderWidth: 1, borderColor: colors.border, padding: 13, marginBottom: 16 },
+  chatHeader: { flexDirection: "row", alignItems: "center", gap: 9, marginBottom: 10 },
+  chatIcon: { width: 32, height: 32, borderRadius: 11, backgroundColor: colors.amber, alignItems: "center", justifyContent: "center" },
+  chatTitle: { color: colors.text, fontSize: 12, fontWeight: "900" },
+  chatSubtitle: { color: colors.dim, fontSize: 9, marginTop: 2 },
+  onlineDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.teal },
+  chatHint: { color: colors.muted, fontSize: 10, lineHeight: 15, marginBottom: 9 },
+  chatBubble: { borderRadius: 13, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 7, maxWidth: "92%" },
+  chatBubbleUser: { alignSelf: "flex-end", backgroundColor: colors.tealSoft },
+  chatBubbleAgent: { alignSelf: "flex-start", backgroundColor: colors.surfaceRaised },
+  chatBubbleText: { color: colors.text, fontSize: 10, lineHeight: 15 },
+  chatComposer: { flexDirection: "row", alignItems: "flex-end", gap: 7, marginTop: 3 },
+  chatInput: { flex: 1, minHeight: 40, maxHeight: 90, color: colors.text, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: 13, paddingHorizontal: 11, paddingVertical: 9, fontSize: 11 },
+  chatSend: { width: 38, height: 38, borderRadius: 13, backgroundColor: colors.amber, alignItems: "center", justifyContent: "center" },
+  memoryStrip: { flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 11, paddingTop: 9 },
+  memoryText: { color: colors.muted, fontSize: 9, lineHeight: 13, flex: 1 },
   infoCard: { flexDirection: "row", gap: 11, backgroundColor: colors.tealSoft, borderRadius: 17, borderWidth: 1, borderColor: "#28524C", padding: 13 },
   infoIcon: { width: 34, height: 34, borderRadius: 12, backgroundColor: "#214844", alignItems: "center", justifyContent: "center" },
   infoTitle: { color: colors.text, fontSize: 12, fontWeight: "800" },
@@ -534,7 +595,7 @@ const styles = StyleSheet.create({
   errorText: { color: colors.red, fontSize: 9 },
   modalRoot: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.54)" },
   modalBackdrop: { ...StyleSheet.absoluteFill },
-  modalSheet: { maxHeight: "88%", backgroundColor: colors.background, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingTop: 10, paddingBottom: Platform.OS === "web" ? 22 : 28 },
+  modalSheet: { maxHeight: "92%", backgroundColor: colors.background, borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingTop: 10, paddingBottom: Platform.OS === "web" ? 22 : 18 },
   modalHandle: { width: 40, height: 4, borderRadius: 4, backgroundColor: colors.dim, alignSelf: "center", marginBottom: 17 },
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 17 },
   modalTitle: { color: colors.text, fontSize: 21, fontWeight: "800" },
