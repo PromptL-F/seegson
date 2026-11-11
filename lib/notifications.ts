@@ -1,6 +1,10 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
+import { expoWeekday, isExpiredOnce, onceFireTime, type ReminderRepeat, type Weekday } from "@/shared/agent-actions";
+
+export { isExpiredOnce };
+
 export const EVENT_CHANNEL_ID = "seegson-events";
 export const DAILY_CHANNEL_ID = "seegson-daily";
 export const AGENT_CHANNEL_ID = "seegson-agent";
@@ -79,33 +83,61 @@ export async function scheduleEventAlarm(input: {
   });
 }
 
-export async function scheduleDailyReminder(input: {
+export type ReminderSchedule = {
   taskId: string;
   title: string;
   time: string;
-}): Promise<string | null> {
+  repeat?: ReminderRepeat;
+  date?: string;
+  weekday?: Weekday;
+};
+
+export async function scheduleReminder(input: ReminderSchedule): Promise<string | null> {
   const granted = await ensureNotificationPermission();
   if (!granted) return null;
+  if (!isValidTime(input.time)) return null;
 
   const [hour, minute] = input.time.split(":").map(Number);
-  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-    return null;
+  const content = {
+    title: "Recordatorio de Seegson",
+    body: input.title,
+    sound: "default" as const,
+    data: { taskId: input.taskId, kind: "reminder" },
+  };
+  const repeat = input.repeat ?? "daily";
+
+  if (repeat === "once") {
+    const fireAt = onceFireTime(input.date, input.time);
+    if (!fireAt || fireAt.getTime() <= Date.now()) return null;
+    return Notifications.scheduleNotificationAsync({
+      content,
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: fireAt, channelId: DAILY_CHANNEL_ID },
+    });
+  }
+
+  if (repeat === "weekly") {
+    if (!input.weekday) return null;
+    return Notifications.scheduleNotificationAsync({
+      content,
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+        weekday: expoWeekday(input.weekday),
+        hour,
+        minute,
+        channelId: DAILY_CHANNEL_ID,
+      },
+    });
   }
 
   return Notifications.scheduleNotificationAsync({
-    content: {
-      title: "Recordatorio de Seegson",
-      body: input.title,
-      sound: "default",
-      data: { taskId: input.taskId, kind: "daily-reminder" },
-    },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour,
-      minute,
-      channelId: DAILY_CHANNEL_ID,
-    },
+    content,
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute, channelId: DAILY_CHANNEL_ID },
   });
+}
+
+/** Se conserva por compatibilidad: avisos diarios. */
+export async function scheduleDailyReminder(input: { taskId: string; title: string; time: string }): Promise<string | null> {
+  return scheduleReminder({ ...input, repeat: "daily" });
 }
 
 export async function cancelLocalNotification(id?: string): Promise<void> {

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   Linking,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -21,7 +22,7 @@ import { startOAuthLogin } from "@/constants/oauth";
 import {
   cancelLocalNotification,
   isValidTime,
-  scheduleDailyReminder,
+  scheduleReminder,
   scheduleEventAlarm,
 } from "@/lib/notifications";
 import {
@@ -32,8 +33,10 @@ import {
   type DailyReminderTask,
   type SeegsonEvent,
 } from "@/lib/seegson-storage";
+import { SeegsonLogo } from "@/components/seegson-logo";
 import { colors, radii } from "@/lib/seegson-theme";
 import { trpc } from "@/lib/trpc";
+import { describeSchedule } from "@/shared/agent-actions";
 
 type RemoteArchTask = {
   id: number;
@@ -164,7 +167,7 @@ export default function AlertsScreen() {
           enabled: formEnabled,
           notificationId: undefined,
         };
-        if (formEnabled) nextTask.notificationId = (await scheduleDailyReminder({ taskId: oldTask.id, title: nextTask.title, time: formTime })) ?? undefined;
+        if (formEnabled) nextTask.notificationId = (await scheduleReminder({ taskId: oldTask.id, title: nextTask.title, time: formTime, repeat: nextTask.repeat, date: nextTask.date, weekday: nextTask.weekday })) ?? undefined;
         if (formEnabled && !nextTask.notificationId) {
           nextTask.enabled = false;
           setFormEnabled(false);
@@ -216,7 +219,7 @@ export default function AlertsScreen() {
       if (task.notificationId) await cancelLocalNotification(task.notificationId);
       const updated: DailyReminderTask = { ...task, enabled: nextEnabled, notificationId: undefined };
       if (nextEnabled) {
-        updated.notificationId = (await scheduleDailyReminder({ taskId: task.id, title: task.title, time: task.time })) ?? undefined;
+        updated.notificationId = (await scheduleReminder({ taskId: task.id, title: task.title, time: task.time, repeat: task.repeat, date: task.date, weekday: task.weekday })) ?? undefined;
         if (!updated.notificationId) {
           updated.enabled = false;
           setActionError("La rutina quedó pausada porque no se pudo programar. Revisa los permisos de Android.");
@@ -298,7 +301,7 @@ export default function AlertsScreen() {
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
         <View style={styles.brandRow}>
-          <View style={styles.brandMark}><Ionicons name="notifications-outline" size={20} color={colors.background} /></View>
+          <SeegsonLogo size={40} />
           <View><Text style={styles.brandName}>SEEGSON</Text><Text style={styles.brandSubtitle}>CENTRO DE AVISOS</Text></View>
           <View style={styles.livePill}><View style={styles.liveDot} /><Text style={styles.liveText}>BAJO CONTROL</Text></View>
         </View>
@@ -353,7 +356,7 @@ export default function AlertsScreen() {
             {dailyTasks.map((task) => (
               <View key={task.id} style={styles.noticeCard}>
                 <View style={styles.noticeIconDaily}><Ionicons name="repeat-outline" size={17} color={colors.amber} /></View>
-                <View style={styles.noticeMain}><Text style={styles.noticeTitle} numberOfLines={1}>{task.title}</Text><Text style={styles.noticeMeta}>Cada día · {task.time}</Text><Text style={styles.noticeSubmeta}>{task.enabled ? Platform.OS === "web" ? "Se activará en Android" : "Repetición activa en este Android" : "Tarea pausada"}</Text></View>
+                <View style={styles.noticeMain}><Text style={styles.noticeTitle} numberOfLines={1}>{task.title}</Text><Text style={styles.noticeMeta}>{describeSchedule(task)}</Text><Text style={styles.noticeSubmeta}>{task.enabled ? Platform.OS === "web" ? "Se activará en Android" : "Repetición activa en este Android" : "Tarea pausada"}</Text></View>
                 <Switch value={task.enabled} onValueChange={() => void toggleDaily(task)} trackColor={{ false: colors.surfaceSoft, true: colors.amberSoft }} thumbColor={task.enabled ? colors.amber : colors.muted} />
                 <Pressable onPress={() => openEditor({ kind: "daily", value: task })} style={styles.iconButton} accessibilityLabel="Editar tarea"><Ionicons name="create-outline" size={17} color={colors.muted} /></Pressable>
                 <Pressable onPress={() => void deleteDaily(task)} style={styles.iconButton} accessibilityLabel="Eliminar tarea"><Ionicons name="trash-outline" size={16} color={colors.dim} /></Pressable>
@@ -415,7 +418,7 @@ export default function AlertsScreen() {
       </ScrollView>
 
       <Modal visible={!!editing} transparent animationType="slide" onRequestClose={() => setEditing(null)}>
-        <View style={styles.modalRoot}>
+        <KeyboardAvoidingView style={styles.modalRoot} behavior="padding">
           <Pressable style={styles.modalBackdrop} onPress={() => setEditing(null)} />
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
@@ -428,7 +431,7 @@ export default function AlertsScreen() {
             {!!formError && <Text style={styles.formError}>{formError}</Text>}
             <Pressable onPress={() => void saveEdit()} disabled={saving} style={[styles.saveButton, saving && { opacity: 0.65 }]}><Text style={styles.saveButtonText}>{saving ? "Guardando…" : "Guardar cambios"}</Text><Ionicons name="arrow-forward" size={16} color={colors.background} /></Pressable>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

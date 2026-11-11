@@ -7,8 +7,8 @@ Seegson es una app Android con calendario, agenda de eventos, alarmas y un agent
 - Calendario mensual y agenda por fecha, con creación, edición, eliminación, categorías, estados, filtros y búsqueda en toda la agenda.
 - Alarmas locales por evento; por ejemplo, un evento a las 16:00 puede llevar un aviso a las 00:00 del mismo día.
 - Recordatorios diarios locales configurables.
-- Chat con IA remota a través del backend integrado; no ejecuta ningún modelo local en el teléfono.
-- Memoria persistente por cuenta: el agente guarda frases explícitas como “Recuerda que…” y permite olvidar el último recuerdo desde la interfaz.
+- **Agente con IA** (pestaña *Agente*): se le escribe en lenguaje natural ("recuérdame el viernes a las 6 pagar la luz") y crea avisos de una vez, diarios o semanales, agrega eventos al calendario, pausa o borra recordatorios y responde qué hay pendiente. La IA corre en la nube; no se ejecuta ningún modelo en el teléfono.
+- **Memoria persistente** por cuenta: con frases como “Recuerda que…” el agente guarda un dato y lo tiene en cuenta después; se puede olvidar desde el chat.
 - Vigilancia programada del feed oficial de noticias de Arch Linux, deduplicación de entradas, historial de alertas y entrega Expo Push cuando el dispositivo esté registrado.
 - Centro unificado para revisar y administrar alarmas, rutinas y vigilancia.
 
@@ -30,15 +30,25 @@ Las alarmas de eventos y los recordatorios diarios se programan como notificacio
 
 La vigilancia de Arch se ejecuta en el servidor mediante tareas programadas. Su ejecución continua requiere publicar la versión del servidor y registrar un token push Expo válido en un build Android conectado a un proyecto Expo. Sin esa conexión, las alertas guardadas se consultan desde la bandeja de Seegson, pero no se puede afirmar que llegue push al teléfono.
 
-El chat usa `invokeLLM` en el servidor y las credenciales `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY` del entorno de ejecución; nunca se envían claves al cliente Android. La migración `0003_seegson_agent_memory.sql` crea el historial breve y la memoria persistente por usuario.
-
 El preset vigila **Arch Linux News** (`https://archlinux.org/feeds/news/`): son noticias/comunicados oficiales, no cada actualización de paquete. Eventos y recordatorios diarios se guardan localmente en el dispositivo; no se sincronizan entre teléfonos.
+
+## Agente con IA
+
+El servidor llama a la IA con *function calling*: el modelo solo propone acciones y el servidor valida cada una (`shared/agent-actions.ts`) antes de enviarlas a la app, que las ejecuta como notificaciones locales. Si no se puede programar un aviso (permiso de notificaciones o hora ya pasada), el chat lo dice en lugar de fingir que quedó guardado.
+
+Proveedor de IA (se elige solo, en este orden; las claves viven en el servidor, nunca en la app):
+
+1. **Gemini**, si existe `GEMINI_API_KEY` (clave de Google AI Studio). `GEMINI_MODEL` es opcional y por defecto usa `gemini-flash-latest`.
+2. **`invokeLLM`** del servicio integrado de la plataforma, con `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY`, que ya existen en el entorno publicado y no requieren configuración.
+
+Con Gemini la IA puede encadenar varias rondas (por ejemplo, confirmar tras ejecutar); con `invokeLLM` hace una sola, porque ese cliente no reenvía `tool_calls`. En ambos casos la app muestra el resultado real de cada acción.
+
+`agent.chat` exige sesión iniciada y limita a 12 mensajes por minuto por usuario. La conversación se guarda en el teléfono; la memoria, en la base de datos (`0003_seegson_agent_memory.sql`). La tabla `agent_messages` de esa migración ya no la usa el chat.
 
 ## Verificación de esta versión
 
 - `pnpm check`: correcto.
-- `CI=true pnpm test`: 31 aprobadas, 1 omitida preexistente.
+- `CI=true pnpm test`: 63 aprobadas, 1 omitida preexistente (incluye el contrato de acciones, la memoria y ambos proveedores de IA con respuestas simuladas).
 - `CI=true pnpm lint`: correcto.
-- `CI=true pnpm build`: correcto.
-- Expo resolvió el icono, el plugin de notificaciones, el paquete Android y los permisos configurados.
-- Metro (8081) y API (3000) respondieron correctamente; falta la validación física de notificaciones y del recorrido push autenticado.
+- `CI=true pnpm build` y `expo export --platform web`: correctos.
+- **No verificado**: llamadas reales a Gemini o a `invokeLLM`, comportamiento del teclado en un Android físico y entrega de notificaciones con la app cerrada.

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   Linking,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -29,6 +30,7 @@ import {
   type EventStatus,
   type SeegsonEvent,
 } from "@/lib/seegson-storage";
+import { SeegsonLogo } from "@/components/seegson-logo";
 import { colors, radii } from "@/lib/seegson-theme";
 
 const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"];
@@ -399,12 +401,10 @@ export default function CalendarScreen() {
     <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
       <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
         <View style={styles.brandRow}>
-          <View style={styles.brandMark}>
-            <Ionicons name="time-outline" size={20} color={colors.background} />
-          </View>
+          <SeegsonLogo size={40} />
           <View>
             <Text style={styles.brandName}>SEEGSON</Text>
-            <Text style={styles.brandSubtitle}>GESTOR DE EVENTOS</Text>
+            <Text style={styles.brandSubtitle}>CALENDARIO</Text>
           </View>
           <View style={styles.headerDatePill}>
             <View style={styles.liveDot} />
@@ -517,7 +517,7 @@ export default function CalendarScreen() {
       </ScrollView>
 
       <Modal visible={modalVisible} transparent animationType="slide" onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.modalRoot}>
+        <KeyboardAvoidingView style={styles.modalRoot} behavior="padding">
           <Pressable style={styles.modalBackdrop} onPress={() => setModalVisible(false)} />
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
@@ -604,7 +604,7 @@ export default function CalendarScreen() {
               </Pressable>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

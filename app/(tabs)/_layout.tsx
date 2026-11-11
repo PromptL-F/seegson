@@ -14,6 +14,7 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBarHideOnKeyboard: true,
         tabBarButton: HapticTab,
         tabBarActiveTintColor: colors.amber,
         tabBarInactiveTintColor: colors.dim,
@@ -42,10 +43,17 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="agent"
+        name="chat"
         options={{
           title: "Agente",
-          tabBarIcon: ({ color, size }) => <Ionicons name="radio-outline" size={size} color={color} />,
+          tabBarIcon: ({ color, size }) => <Ionicons name="sparkles-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="agent"
+        options={{
+          title: "Tareas",
+          tabBarIcon: ({ color, size }) => <Ionicons name="checkmark-done-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen

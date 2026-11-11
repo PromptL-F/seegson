@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { agentMemories, agentMessages, agentTasks, users } from "../drizzle/schema";
+import { agentMemories, agentTasks, users } from "../drizzle/schema";
 import { createHeartbeatJob, deleteHeartbeatJob, updateHeartbeatJob } from "./_core/heartbeat";
 import { currentSessionCookie } from "./_core/cookies";
 import { invokeLLM } from "./_core/llm";
@@ -8,6 +8,29 @@ import { protectedProcedure, router } from "./_core/trpc";
 import { getLatestArchNewsKey } from "./arch-news";
 import { dailyCronFromLocalTime, isValidTimeZone, listAgentAlertsForUser, listAgentTasksForUser } from "./agent-tasks";
 import { getDb } from "./db";
+import { ENV } from "./_core/env";
+import { chatInputSchema, type ChatContext, type ChatMessage, type ChatResult } from "../shared/agent-actions";
+import { AgentUnavailableError, type AgentMemory } from "./agent-tools";
+import { memoryFromMessage } from "./agent-memory";
+import { runAgentChat } from "./gemini-agent";
+import { runForgeChat } from "./forge-agent";
+import { TRPCError } from "@trpc/server";
+
+// Límite sencillo por usuario para proteger la cuota de la clave de Gemini.
+const CHAT_WINDOW_MS = 60_000;
+const CHAT_MAX_PER_WINDOW = 12;
+const chatHits = new Map<number, number[]>();
+
+export function takeChatSlot(userId: number, now = Date.now()): boolean {
+  const recent = (chatHits.get(userId) ?? []).filter((hit) => now - hit < CHAT_WINDOW_MS);
+  if (recent.length >= CHAT_MAX_PER_WINDOW) {
+    chatHits.set(userId, recent);
+    return false;
+  }
+  recent.push(now);
+  chatHits.set(userId, recent);
+  return true;
+}
 
 function getHeartbeatSession(req: Parameters<typeof currentSessionCookie>[0]): string {
   const header = req.headers.authorization;
@@ -21,20 +44,55 @@ const taskIdInput = z.object({ id: z.number().int().positive() });
 const timeInput = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const timeZoneInput = z.string().min(1).max(64).refine(isValidTimeZone, "Zona horaria IANA no válida");
 
-const chatInput = z.object({ message: z.string().trim().min(1).max(4000) });
-
-function textFromLLM(value: string | Array<{ type: string; text?: string }>): string {
-  if (typeof value === "string") return value.trim();
-  return value.filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n").trim();
-}
-
-function memoryFromMessage(message: string): string | null {
-  const match = message.match(/^(?:recuerda(?:me)?|acu[eé]rdate|remember)\s*(?:que|to)?\s*[:\-]?\s*(.+)$/i);
-  const content = match?.[1]?.trim().replace(/[.!?]+$/, "");
-  return content && content.length >= 3 ? content.slice(0, 1000) : null;
+/** Gemini si hay clave propia; si no, el servicio de IA integrado de la plataforma. */
+export function runChatProvider(messages: ChatMessage[], context: ChatContext, memories: AgentMemory[]): Promise<ChatResult> {
+  if (ENV.geminiApiKey) {
+    return runAgentChat({ apiKey: ENV.geminiApiKey, model: ENV.geminiModel }, messages, context, memories);
+  }
+  if (ENV.forgeApiKey) {
+    return runForgeChat(invokeLLM, messages, context, memories);
+  }
+  throw new AgentUnavailableError("El agente de IA no está configurado: define GEMINI_API_KEY en el servidor.");
 }
 
 export const agentRouter = router({
+  chat: protectedProcedure.input(chatInputSchema).mutation(async ({ ctx, input }) => {
+    if (!takeChatSlot(ctx.user.id)) {
+      throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Vas muy rápido. Espera un momento antes de escribir de nuevo." });
+    }
+
+    // La memoria es opcional: si la base de datos falla, el agente sigue funcionando sin ella.
+    const lastMessage = input.messages[input.messages.length - 1].content;
+    const remembered = memoryFromMessage(lastMessage);
+    let memories: AgentMemory[] = [];
+    try {
+      const db = await getDb();
+      if (db) {
+        if (remembered) {
+          await db.insert(agentMemories).values({ userId: ctx.user.id, content: remembered, source: "chat", isActive: true });
+        }
+        memories = await db
+          .select({ id: agentMemories.id, content: agentMemories.content })
+          .from(agentMemories)
+          .where(and(eq(agentMemories.userId, ctx.user.id), eq(agentMemories.isActive, true)))
+          .orderBy(desc(agentMemories.createdAt))
+          .limit(30);
+      }
+    } catch (error) {
+      console.error("[agent] memoria no disponible:", error instanceof Error ? error.message : "error desconocido");
+    }
+
+    try {
+      const result = await runChatProvider(input.messages, input.context, memories);
+      return { ...result, remembered };
+    } catch (error) {
+      if (error instanceof AgentUnavailableError) {
+        throw new TRPCError({ code: "SERVICE_UNAVAILABLE", message: error.message });
+      }
+      throw error;
+    }
+  }),
+
   tasks: protectedProcedure.query(async ({ ctx }) => listAgentTasksForUser(ctx.user.id)),
 
   alerts: protectedProcedure.query(async ({ ctx }) => listAgentAlertsForUser(ctx.user.id)),
@@ -53,44 +111,6 @@ export const agentRouter = router({
       await db.update(agentMemories).set({ isActive: false }).where(and(eq(agentMemories.id, input.id), eq(agentMemories.userId, ctx.user.id)));
       return { forgotten: true };
     }),
-
-  chat: protectedProcedure.input(chatInput).mutation(async ({ ctx, input }) => {
-    const db = await getDb();
-    if (!db) throw new Error("Database is unavailable");
-
-    const remembered = memoryFromMessage(input.message);
-    if (remembered) {
-      await db.insert(agentMemories).values({ userId: ctx.user.id, content: remembered, source: "chat", isActive: true });
-    }
-
-    const [memories, recentMessages] = await Promise.all([
-      db.select({ id: agentMemories.id, content: agentMemories.content }).from(agentMemories)
-        .where(and(eq(agentMemories.userId, ctx.user.id), eq(agentMemories.isActive, true)))
-        .orderBy(desc(agentMemories.createdAt)).limit(30),
-      db.select({ role: agentMessages.role, content: agentMessages.content }).from(agentMessages)
-        .where(eq(agentMessages.userId, ctx.user.id)).orderBy(desc(agentMessages.createdAt)).limit(12),
-    ]);
-
-    await db.insert(agentMessages).values({ userId: ctx.user.id, role: "user", content: input.message });
-    const memoryBlock = memories.length > 0
-      ? memories.map((memory) => `- [${memory.id}] ${memory.content}`).join("\n")
-      : "(Todavía no hay recuerdos guardados.)";
-    const history = recentMessages.reverse().map((message) => ({ role: message.role, content: message.content } as const));
-    const result = await invokeLLM({
-      messages: [
-        {
-          role: "system",
-          content: `Eres Seegson, un agente personal claro, sobrio y útil. Responde en español salvo que la persona cambie de idioma. Puedes recordar datos solo cuando la persona diga explícitamente “recuerda”, “acuérdate” o “remember”; confirma cuando se haya guardado. No inventes ejecuciones ni notificaciones: las tareas programadas se gestionan desde la sección de tareas. Memoria persistente actual:\n${memoryBlock}`,
-        },
-        ...history,
-        { role: "user", content: input.message },
-      ],
-      maxTokens: 700,
-    });
-    const reply = textFromLLM(result.choices[0]?.message?.content ?? "No pude responder en este momento.");
-    await db.insert(agentMessages).values({ userId: ctx.user.id, role: "assistant", content: reply });
-    return { reply, remembered: remembered ?? null, memories };
-  }),
 
   registerPushToken: protectedProcedure
     .input(z.object({ token: z.string().min(20).max(255) }))
