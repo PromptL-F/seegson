@@ -1,0 +1,1 @@
+{"routes":[{"path":"/","title":"Calendario"},{"path":"/chat","title":"Agente"},{"path":"/agent","title":"Tareas"},{"path":"/alerts","title":"Avisos"},{"path":"/oauth/callback","title":"Autenticación"},{"path":"/dev/theme-lab","title":"Laboratorio de tema"}]}
